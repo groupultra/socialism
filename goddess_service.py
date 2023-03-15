@@ -7,7 +7,19 @@ import datetime
 
 
 class GoddessService(BaseGoddessService):
+    """
+        This is the wrapped Goddess service.
+        CCS provides a various of features for users in corresponding channels to use.
+    """
+
     def __init__(self, port, uri, token, dbfile, name='GoddessService'):
+        """
+            Args:
+                port: The python code should run on this port on your server.
+                uri: Starts with "wss://", the websocket uri.
+                token: The token you get from social frontend.
+                dbfile: For this version, it's a path to a json file. 
+        """
         super().__init__(port)
         self.agent = GoddessDBAgent(dbfile)
         self.uri = uri
@@ -40,6 +52,15 @@ class GoddessService(BaseGoddessService):
 
 
     def add_feature(self, name, code, prompts, func=None):
+        """
+            Add a feature to the service.
+            Every feature contains a name, a code and a prompt.
+
+            Args:
+                code: A five-digited int starting with 9, like 90001.
+                prompts: Will be replaced by "params" in the future. Now it's the string that shows to the user in the input bar.
+                func: When receieve this feature from the frontend, will call this function to handle. In goddess mode, all of the handle functions should be async.
+        """
         self.feature_commands.append(
             {'name': name, 'code': code, 'prompts': [prompts]})
         self.prompt[code] = prompts
@@ -47,15 +68,34 @@ class GoddessService(BaseGoddessService):
             self.feature_func_map[code] = func
 
     def set_basic_command_handle(self, code, func):
+        """
+            Set a handler for a basic command.
+            The command is specified by its code.
+            Some commands will be like "help", "quit".
+        """
         self.basic_command_func_map[code] = func
 
     def set_notice_handle(self, code, func):
+        """
+            Set a handler for a notice.
+            The notice is specified by its code.
+            Some notices will be like "user joined the channel", "user left the channel".
+        """
         self.notice_func_map[code] = func
 
     def set_feature_handle(self, code, func):
+        """
+            Set a handler for a feature.
+            The feature is specified by its code.
+        """
         self.feature_func_map[code] = func
 
     def set_message_handle(self, code, func):
+        """
+            Set a handler for a message.
+            Code for messages is MESSAGE_TO_CCS, but we need to specify by the type_code.
+            For example, text messages are MESSAGE_UP_TEXT.
+        """
         self.message_func_map[code] = func
 
     async def _handle_data_dict_core(self, data, ws, path):
@@ -163,8 +203,10 @@ class GoddessService(BaseGoddessService):
     
     ### Some wrapped functions, use them to make your work easier!
     
-    # broadcast to all users
     async def broadcast_command_text(self, channel_id, ws, text, clear=False):
+        """
+            Broadcast a text to all users in a channel.
+        """
         await self._send_command_down(
             ws, 
             self.codes.COMMAND_DOWN_DISPLAY_TEXT,
@@ -174,6 +216,9 @@ class GoddessService(BaseGoddessService):
         )
     
     async def broadcast_command_image(self, channel_id, ws, url, clear=False):
+        """
+            Broadcast an image to all users in a channel.
+        """
         await self._send_command_down(
             ws, 
             self.codes.COMMAND_DOWN_DISPLAY_IMAGE,
@@ -182,8 +227,10 @@ class GoddessService(BaseGoddessService):
             args={'type':'url', 'image': url}
         )
     
-    # only reply to the sender
     async def reply_command_text(self, data, ws, text, clear=False):
+        """
+            Reply a text to the sender.
+        """
         await self._send_command_down(
             ws, 
             self.codes.COMMAND_DOWN_DISPLAY_TEXT,
@@ -198,6 +245,9 @@ class GoddessService(BaseGoddessService):
         text_to_sender, text_to_others, 
         clear_sender=False, clear_others=False
     ):
+        """
+            Dog whistle, send different text to sender and the others separately.
+        """
         # to sender
         await self._send_command_down(
             ws, 
@@ -220,18 +270,33 @@ class GoddessService(BaseGoddessService):
 # default operations, user can write their own functions to cover them
 
 async def handle_fetch_command(self, data, ws, path):
+    """
+        A function that handles the "fetch command" notice.
+        This can be the default behavior.
+        You may want to use it in your customized handle functions.
+    """
     channel_id = data['extra']['channel_id']
     user_id = data['extra']['user_id']
     await self._send_command_down(ws, self.codes.COMMAND_DOWN_UPDATE_CCS_COMMAND_LIST,
         channel_id=channel_id, to_user_ids=[user_id], commands=self.feature_commands)
 
 async def handle_join(self, data, ws, path):
+    """
+        A function that handles the "join" notice.
+        This can be the default behavior.
+        You may want to use it in your customized handle functions.
+    """
     channel_id = data['extra']['channel_id']
     user_id = data['extra']['user_id']
     await self._send_command_down(ws, self.codes.COMMAND_DOWN_UPDATE_CCS_COMMAND_LIST,
         channel_id=channel_id, to_user_ids=[user_id], commands=self.feature_commands)
 
 async def handle_notice_auth_token(self, data, ws, path):
+    """
+        A function that handles the "auth token" notice.
+        This can be the default behavior.
+        You may want to use it in your customized handle functions.
+    """
     print('yellow 502 ask notice auth token', data)
     user_id = data['extra']['user_id']
     channel_id = data['extra']['channel_id']
@@ -241,6 +306,11 @@ async def handle_notice_auth_token(self, data, ws, path):
     await self._send_data_to_ws(ws, self.codes.COPERATION_CONFIRM_AUTH_TOKEN, user_id=user_id, channel_id=channel_id, to_user_ids=[user_id], target_channel_id=target_channel_id, uri=uri, token=token)
     
 async def handle_notice_take_over(self, data, ws, path):
+    """
+        A function that handles the "take over" notice.
+        This can be the default behavior.
+        You may want to use it in your customized handle functions.
+    """
     print("yellow 502 NOTICE_TAKE_OVER data", data)
     target_channel_id = data['extra']['target_channel_id']
     target_user_ids = data['extra']['target_user_ids']
@@ -258,6 +328,11 @@ async def handle_notice_take_over(self, data, ws, path):
                                     channel_id=target_channel_id, to_user_ids=target_user_ids, user_ids=target_user_ids, commands=self.feature_commands)
 
 async def handle_notice_release(self, data, ws, path):
+    """
+        A function that handles the "release" notice.
+        This can be the default behavior.
+        You may want to use it in your customized handle functions.
+    """
     target_channel_id = data['extra']['target_channel_id']
     target_user_ids = data['extra']['target_user_ids']
     print("yellow 502 NOTICE_RELEASE")
@@ -265,6 +340,11 @@ async def handle_notice_release(self, data, ws, path):
     # self.agent.remove_channel_user_map(target_channel_id)
 
 async def handle_notice_user_joined(self, data, ws, path):
+    """
+        A function that handles the "user joined" notice.
+        This can be the default behavior.
+        You may want to use it in your customized handle functions.
+    """
     print('yellow 502 notice user joined', data)
     # on NOTICE_JOIN_SUCCESS, give out UPDATE_CHANNEL_USER_LIST and UPDATE_CCS_COMMAND_LIST
     channel_id = data['extra']['channel_id']
@@ -281,6 +361,11 @@ async def handle_notice_user_joined(self, data, ws, path):
         channel_id=channel_id, to_user_ids=[user_id], commands=self.feature_commands)
 
 async def handle_command_fetch_user_list(self, data, ws, path):
+    """
+        A function that handles the "fetch user list" command.
+        This can be the default behavior.
+        You may want to use it in your customized handle functions.
+    """
     channel_id = data['extra']['channel_id']
     user_id = data['extra']['user_id']
     user_list = self.agent.get_channel_user_list(channel_id)
@@ -289,6 +374,11 @@ async def handle_command_fetch_user_list(self, data, ws, path):
         channel_id=data['extra']['channel_id'], to_user_ids=[user_id], user_ids=user_list)
 
 async def handle_command_fetch_cmd_list(self, data, ws, path):
+    """
+        A function that handles the "fetch command list" command.
+        This can be the default behavior.
+        You may want to use it in your customized handle functions.
+    """
     channel_id = data['extra']['channel_id']
     user_id = data['extra']['user_id']
     # import datetime;
@@ -305,13 +395,28 @@ async def handle_command_fetch_recipient_list(self, data, ws, path):
     pass
 
 async def handle_message_up_text(self, data, ws, path):
+    """
+        A function that handles the received text message.
+        This can be the default behavior.
+        You may want to use it in your customized handle functions.
+    """
     data['extra']['type_code'] += 20000
     await self._send_data_to_ws(ws, self.codes.MESSAGE_FROM_CCS, **data['extra'])
 
 async def handle_message_up_image(self, data, ws, path):
+    """
+        A function that handles the received image message.
+        This can be the default behavior.
+        You may want to use it in your customized handle functions.
+    """
     data['extra']['type_code'] += 20000
     await self._send_data_to_ws(ws, self.codes.MESSAGE_FROM_CCS, **data['extra'])
 
 async def handle_message_up_file(self, data, ws, path):
+    """
+        A function that handles the received file message.
+        This can be the default behavior.
+        You may want to use it in your customized handle functions.
+    """
     data['extra']['type_code'] += 20000
     await self._send_data_to_ws(ws, self.codes.MESSAGE_FROM_CCS, **data['extra'])
