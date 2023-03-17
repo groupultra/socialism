@@ -1,5 +1,5 @@
 # Socialization API
-================
+================\
 The Socialization API is a set of tools to help you build social channels.
 
 ## Installation
