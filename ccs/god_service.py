@@ -16,13 +16,26 @@ class GodService(BaseGodService):
         self.name = 'GodService'
         self.feature_commands = []
 
-        self.basic_command_func_map = {}
-        self.notice_func_map = {}
+        self.basic_command_func_map = {
+            self.codes.COMMAND_UP_FETCH_CCS_COMMAND_LIST: handle_fetch_command,
+            self.codes.COMMAND_UP_FETCH_CHANNEL_USER_LIST: handle_fetch_user_list,
+            self.codes.COMMAND_UP_FETCH_RECIPIENT_LIST: handle_fetch_recipient_list,
+        }
+        self.notice_func_map = {
+            self.codes.NOTICE_USER_JOINED: handle_join,
+            self.codes.NOTICE_USER_LEFT: handle_left,
+            self.codes.NOTICE_GET_CHANNEL_USER_LIST: handle_receive_user_list,
+            self.codes.NOTICE_TAKE_OVER: handle_notice_take_over,
+            self.codes.NOTICE_RELEASE: handle_notice_release,
+            self.codes.NOTICE_COPY_CCS: handle_notice_copy_ccs,
+        }
         self.feature_func_map = {}
 
         self.prompt = {}
 
-        self.message_func_map = {}
+        self.message_func_map = {
+            self.codes.MESSAGE_UP_TEXT: handle_message
+        }
         
         self.temp_msg_map = {}
 
@@ -90,7 +103,8 @@ class GodService(BaseGodService):
     def set_message_handle(self, code, func):
         """
             Set a handler for a message.
-            This code is always MESSAGE_TO_CCS.
+            Code for messages is MESSAGE_TO_CCS, but we need to specify by the type_code.
+            For example, text messages are MESSAGE_UP_TEXT.
         """
         self.message_func_map[code] = func
 
@@ -107,6 +121,7 @@ class GodService(BaseGodService):
                 self._handle_command_to_ccs(data, ws, self.path)
             except Exception as e:
                 print('WrappedGodService: _handle_command_to_ccs error: ', e)
+                traceback.print_exc()
         else:
             raise Exception('no handler for code', data['code'])
 
@@ -164,10 +179,10 @@ class GodService(BaseGodService):
         self._send_data_to_ws(ws, self.codes.COMMAND_FROM_CCS,
                               type_code=type_code, **kwargs)
 
-    def _send_message_down(self, ws, type_code, channel_id, to_user_ids, origin, **kwargs):
+    def _send_message_down(self, ws, type_code, channel_id, from_user_id, to_user_ids, origin, temp_msg_id, **kwargs):
         self._send_data_to_ws(ws, self.codes.MESSAGE_FROM_CCS,
-                              type_code=type_code, channel_id=channel_id, to_user_ids=to_user_ids,
-                              origin=origin, **kwargs)
+                              type_code=type_code, channel_id=channel_id, from_user_id=from_user_id,
+                              to_user_ids=to_user_ids, origin=origin, temp_msg_id=temp_msg_id, **kwargs)
 
     def broadcast_command_text(self, data, ws, text, clear=False):
         """
@@ -228,7 +243,7 @@ class GodService(BaseGodService):
         clear_sender=False, clear_others=False
     ):
         """
-            Dog whistle.
+            Dog whistle, send different text to different users.
         """
         channel_id = data['extra']['channel_id']
         # to sender
@@ -252,7 +267,7 @@ class GodService(BaseGodService):
     def set_account(self, user_id, password):
         """
             Set the account for the service.
-            Fetch these in CH0000.
+            That's your own account.
         """
         self.user_id = user_id
         self.password = password
@@ -290,16 +305,27 @@ def handle_fetch_user_list(self, data, ws, path):
     self.agent.join_channel(channel_id, user_id)
     user_ids = self.agent.get_channel_user_list(channel_id)
     self._send_command_down(ws, self.codes.COMMAND_DOWN_UPDATE_CHANNEL_USER_LIST,
-                            channel_id=channel_id, to_user_ids=user_ids, user_ids=user_ids)
+                            channel_id=channel_id, to_user_ids=[user_id], user_ids=user_ids)
 
 
 def handle_fetch_recipient_list(self, data, ws, path):
-    pass
+    """
+        A function that handles the "fecth recipient list" command.
+        One user can issue this command to see the recipient list of a message.
+        What to return is up to you.
+        This can be the default behavior.
+    """
+    channel_id = data['extra']['channel_id']
+    user_id = data['extra']['user_id']
+    msg_id = data['extra']['msg_id']
+    recipient_list = self.agent.get_whistle_recipients(channel_id, msg_id)
+    self._send_command_down(ws, self.codes.COMMAND_DOWN_UPDATE_RECIPIENT_LIST,
+                            channel_id=channel_id, msg_id=msg_id, to_user_ids=[user_id], recipients=recipient_list)
 
 
 def handle_receive_user_list(self, data, ws, path):
     """
-        A function that handles the "get user list" notice.
+        A function that handles the "get channel user list" notice, which indicates that you received some user list.
         This can be the default behavior.
     """
     channel_id = data['extra']['channel_id']
@@ -339,12 +365,14 @@ def handle_notice_take_over(self, data, ws, path):
     """
         A function that handles the "take over channel" notice.
         This can be the default behavior.
+        Operate this in CH0000.
     """
     print("NOTICE_TAKE_OVER\n", data)
     target_channel_id = data['extra']['target_channel_id']
     # target_channel_name = data['extra']['target_channel_name']
     user_ids = data["extra"]["target_user_ids"]
     self.agent.init_user_id_list(target_channel_id, user_ids)
+    self.agent.init_whistle(target_channel_id)
     self._send_command_down(ws, self.codes.COMMAND_DOWN_UPDATE_CHANNEL_USER_LIST,
                             channel_id=target_channel_id, to_user_ids=user_ids, user_ids=user_ids)
     self._send_command_down(ws, self.codes.COMMAND_DOWN_UPDATE_CCS_COMMAND_LIST,
@@ -355,19 +383,38 @@ def handle_notice_release(self, data, ws, path):
     """
         A function that handles the "release channel" notice.
         This can be the default behavior.
+        Operate this in CH0000.
     """
     # target_channel_id = data['extra']['target_channel_id']
     # target_user_ids = data['extra']['target_user_ids']
     print("NOTICE_RELEASE")
 
+def handle_notice_copy_ccs(self, data, ws, path):
+    """
+        A function that handles the "copy ccs message" notice.
+        After a message is sent downwards, this notice will be sent to ccs.
+        This is used to tell ccs which msg_id the message really holds on the aspect of social backend.
+    """
+    channel_id = data['extra']['channel_id']
+    temp_msg_id = data['extra']['ccs_temp_msg_id']
+    true_msg_id = data['extra']['msg_id']
+    self.agent.add_whistle_msg(channel_id, true_msg_id, self.temp_msg_map[(channel_id, temp_msg_id)])
+    self.temp_msg_map.pop((channel_id, temp_msg_id))
+
 def handle_message(self, data, ws, path):
     """
-        A function that handles message to ccs.
+        A function that handles text message to ccs.
         This can be the default behavior.
-        When a message is sent, CCS will receive a response
-        //TODO: describe later things, like what response and whistle parts
-        def _send_message_down(self, ws, type_code, channel_id, to_user_ids, origin, **kwargs):
+        Note that all recipients are stored, which is for FETCH_RECIPIENT_LIST.
+        MESSAGE_UP_TEXT is for text messages, and other types are not implemented yet.
+        This triggers a "copy ccs message" notice.
+        See the function above.
     """
-    self._send_message_down(ws, data['extra']['type_code'], data['extra']['channel_id'], data['extra']['to_user_ids'],
-                            data['extra']['origins'])
-    self.temp_msg_map[data['extra']['temp_msg_id']] = data['extra']['to_user_ids']
+    channel_id = data['extra']['channel_id']
+    from_user_id = data['extra']['from_user_id']
+    to_user_ids = data['extra']['to_user_ids']
+    temp_msg_id = data['extra']['msg_id']
+    self._send_message_down(ws, data['extra']['type_code']+20000, channel_id, from_user_id, to_user_ids,
+                            data['extra']['origin'], msg_body=data['extra']['msg_body'], temp_msg_id=temp_msg_id)
+    self.temp_msg_map[(channel_id, temp_msg_id)] = to_user_ids
+    # self.agent.add_whistle_msg(channel_id, temp_msg_id, to_user_ids)
