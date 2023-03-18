@@ -1,14 +1,14 @@
 from .base_goddess_service import BaseGoddessService
-from .wrapped_goddess_db_agent import WrappedGoddessDBAgent
+from .database_agent import DatabaseAgent
 import rel
 import asyncio
 import time
 import datetime
 
-class WrappedGoddessService(BaseGoddessService):
-    def __init__(self, port, uri, token, name='WrappedGoddessService'):
+class GoddessService(BaseGoddessService):
+    def __init__(self, port, uri, token, dbfile, name='GoddessService'):
         super().__init__(port)
-        self.agent = WrappedGoddessDBAgent('/home/ubuntu/social_backend/yellow502goddess.json')
+        self.agent = DatabaseAgent(dbfile)
         self.uri = uri
         self.token = token
         self.name = name
@@ -26,17 +26,26 @@ class WrappedGoddessService(BaseGoddessService):
             self.codes.NOTICE_TAKE_OVER: handle_notice_take_over,
             self.codes.NOTICE_RELEASE: handle_notice_release,
             self.codes.NOTICE_USER_JOINED: handle_notice_user_joined,
+            self.codes.NOTICE_COPY_CCS: handle_notice_copy_ccs,
+            self.codes.NOTICE_GET_CHANNEL_USER_LIST: handle_receive_user_list,
+            self.codes.NOTICE_USER_LEFT: handle_notice_user_left,
         }
         self.feature_func_map = {}
 
         self.prompt = {}
 
-        self.message_func_map = {}
+        self.message_func_map = {
+            self.codes.MESSAGE_UP_TEXT: handle_message_up_text,
+            self.codes.MESSAGE_UP_IMAGE: handle_message_up_image,
+            self.codes.MESSAGE_UP_FILE: handle_message_up_file,
+        }
+        
+        self.temp_msg_map = {}
 
 
     def add_feature(self, name, code, prompts, func=None):
         self.feature_commands.append(
-            {'name': name, 'code': code, 'prompts': [prompts]})
+            {'name': name, 'code': code, 'prompts': prompts})
         self.prompt[code] = prompts
         if func:
             self.feature_func_map[code] = func
@@ -89,8 +98,6 @@ class WrappedGoddessService(BaseGoddessService):
             await self.basic_command_func_map[type_code](self, data, ws, path)
         else:
             print('no basic_command function for code', type_code)
-    
-
 
     async def _handle_notice(self, data, ws, path):
         type_code = data['extra']['type_code']
@@ -99,40 +106,8 @@ class WrappedGoddessService(BaseGoddessService):
 
         if type_code in self.notice_func_map:
             await self.notice_func_map[type_code](self, data, ws, path)
-            
-        else:
-            if type_code == self.codes.NOTICE_USER_LEFT:
-                channel_id = data['extra']['channel_id']
-                # Here the CCS database may want to update to delete the new user
-                # In the case of Social default Goddess, the database has been updated on OPERATION_JOIN
-                user_id = data['extra']['user_id']
-                self.agent.leave_channel(channel_id, user_id)
-                user_ids = self.agent.get_channel_user_list(channel_id)
-                print('user_ids', user_ids)
-                # serial_numbers= self.agent.user_id_list_to_serial_number_list(user_ids)
-                # alias = [self.serial_number_to_alias(serial_number) for serial_number in serial_numbers]
-                # print('alias', alias)
-                # await self._send_command_down(ws, self.codes.COMMAND_DOWN_UPDATE_CHANNEL_USER_LIST,
-                #     channel_id=channel_id, to_user_ids=user_ids)
-                # await self._send_command_down(ws, self.codes.COMMAND_DOWN_UPDATE_CCS_COMMAND_LIST,
-                #     channel_id=channel_id, to_user_ids=user_ids)
-                
-                await self._send_command_down(ws, self.codes.COMMAND_DOWN_UPDATE_CHANNEL_USER_LIST,
-                    channel_id=channel_id, to_user_ids=user_ids, user_ids=user_ids)
-                # await self._send_command_down(ws, self.codes.COMMAND_DOWN_UPDATE_CCS_COMMAND_LIST,
-                #     channel_id=channel_id, to_user_ids=user_ids, commands=self.feature_commands)
-                
-            elif type_code == self.codes.NOTICE_GET_CHANNEL_USER_LIST:
-                print('ccs yellowbear notice get channel user list', data)    
-                
-
-            else:
-                raise Exception('yellowbear goddess Unknown type_code: {}'.format(type_code))
-        
-        '''
         else:
             print('no notice function for code', type_code)
-        '''
 
     async def _handle_feature(self, data, ws, path):
         type_code = data['extra']['type_code']
@@ -155,6 +130,11 @@ class WrappedGoddessService(BaseGoddessService):
     async def _send_command_down(self, ws, type_code, **kwargs):
         await self._send_data_to_ws(ws, self.codes.COMMAND_FROM_CCS,
                               type_code=type_code, **kwargs)
+    
+    async def _send_message_down(self, ws, type_code, channel_id, from_user_id, to_user_ids, origin, temp_msg_id, **kwargs):
+        await self._send_data_to_ws(ws, self.codes.MESSAGE_FROM_CCS,
+                              type_code=type_code, channel_id=channel_id, from_user_id=from_user_id,
+                              to_user_ids=to_user_ids, origin=origin, temp_msg_id=temp_msg_id, **kwargs)
     
     ### Some wrapped functions, use them to make your work easier!
     
@@ -185,6 +165,16 @@ class WrappedGoddessService(BaseGoddessService):
             channel_id = data['extra']['channel_id'], 
             to_user_ids = [data['extra']['user_id']], 
             args = {'text': text, 'clear': clear}
+        )
+    
+    # TODO: remove "clear" argument
+    async def reply_command_image(self, data, ws, url, clear=False):
+        await self._send_command_down(
+            ws, 
+            self.codes.COMMAND_DOWN_DISPLAY_IMAGE,
+            channel_id = data['extra']['channel_id'], 
+            to_user_ids = [data['extra']['user_id']], 
+            args={'type':'url', 'image': url}
         )
     
     # two texts, one for sender, one for others
@@ -220,11 +210,13 @@ async def handle_fetch_command(self, data, ws, path):
     await self._send_command_down(ws, self.codes.COMMAND_DOWN_UPDATE_CCS_COMMAND_LIST,
         channel_id=channel_id, to_user_ids=[user_id], commands=self.feature_commands)
 
+'''
 async def handle_join(self, data, ws, path):
     channel_id = data['extra']['channel_id']
     user_id = data['extra']['user_id']
     await self._send_command_down(ws, self.codes.COMMAND_DOWN_UPDATE_CCS_COMMAND_LIST,
         channel_id=channel_id, to_user_ids=[user_id], commands=self.feature_commands)
+'''
 
 async def handle_notice_auth_token(self, data, ws, path):
     print('yellow 502 ask notice auth token', data)
@@ -238,14 +230,12 @@ async def handle_notice_auth_token(self, data, ws, path):
 async def handle_notice_take_over(self, data, ws, path):
     print("yellow 502 NOTICE_TAKE_OVER data", data)
     target_channel_id = data['extra']['target_channel_id']
-    # target_user_ids = data['extra']['target_user_ids']
+    user_ids = data['extra']['target_user_ids']
     target_channel_name = data['extra']['target_channel_name']
     target_channel_timestamp = data['extra']['target_channel_timestamp']
     target_channel_timestamp = datetime.datetime.fromtimestamp(target_channel_timestamp)
-    user_ids = await self._send_data_to_ws(ws, self.codes.COPERATION_GET_CHANNEL_USER_LIST, channel_id=target_channel_id)
     self.agent.init_user_id_list(target_channel_id, user_ids)
-    # self.agent.reconstruct_channel(target_channel_id, target_channel_name, target_channel_timestamp)
-    # self.agent.reconstruct_channel_user_map(target_channel_id, target_user_ids)
+    self.agent.init_whistle(target_channel_id)
     await self._send_command_down(ws, self.codes.COMMAND_DOWN_UPDATE_CHANNEL_USER_LIST,
                                     channel_id=target_channel_id, to_user_ids=user_ids, user_ids=user_ids)
     await self._send_command_down(ws, self.codes.COMMAND_DOWN_UPDATE_CCS_COMMAND_LIST,
@@ -274,6 +264,18 @@ async def handle_notice_user_joined(self, data, ws, path):
     await self._send_command_down(ws, self.codes.COMMAND_DOWN_UPDATE_CCS_COMMAND_LIST,
         channel_id=channel_id, to_user_ids=[user_id], commands=self.feature_commands)
 
+async def handle_notice_user_left(self, data, ws, path):
+    """
+        A function that handles the "user leave" notice.
+        This can be the default behavior.
+    """
+    channel_id = data['extra']['channel_id']
+    user_id = data['extra']['user_id']
+    self.agent.leave_channel(channel_id, user_id)
+    user_ids = self.agent.get_channel_user_list(channel_id)
+    await self._send_command_down(ws, self.codes.COMMAND_DOWN_UPDATE_CHANNEL_USER_LIST,
+                            channel_id=channel_id, to_user_ids=user_ids, user_ids=user_ids)
+
 async def handle_command_fetch_user_list(self, data, ws, path):
     channel_id = data['extra']['channel_id']
     user_id = data['extra']['user_id']
@@ -285,15 +287,91 @@ async def handle_command_fetch_user_list(self, data, ws, path):
 async def handle_command_fetch_cmd_list(self, data, ws, path):
     channel_id = data['extra']['channel_id']
     user_id = data['extra']['user_id']
-    # import datetime;
-
-    # ct stores current time
-    # ct = datetime.datetime.now()
-    # print("current time:-", ct)
-    # print('fetch ccs command list', channel_id, user_id)
     await self._send_command_down(ws, self.codes.COMMAND_DOWN_UPDATE_CCS_COMMAND_LIST,
         channel_id=channel_id, to_user_ids=[user_id], commands=self.feature_commands)
 
 async def handle_command_fetch_recipient_list(self, data, ws, path):
-    # TODO
-    pass
+    """
+        A function that handles the "fecth recipient list" command.
+        One user can issue this command to see the recipient list of a message.
+        What to return is up to you.
+        This can be the default behavior.
+    """
+    channel_id = data['extra']['channel_id']
+    user_id = data['extra']['user_id']
+    msg_id = data['extra']['msg_id']
+    recipient_list = self.agent.get_whistle_recipients(channel_id, msg_id)
+    await self._send_command_down(ws, self.codes.COMMAND_DOWN_UPDATE_RECIPIENT_LIST,
+                            channel_id=channel_id, msg_id=msg_id, to_user_ids=[user_id], recipients=recipient_list)
+
+async def handle_receive_user_list(self, data, ws, path):
+    """
+        A function that handles the "get channel user list" notice, which indicates that you received some user list.
+        This can be the default behavior.
+    """
+    channel_id = data['extra']['channel_id']
+    user_ids = data['extra']['user_ids']
+    self.agent.init_user_id_list(channel_id, user_ids)
+
+async def handle_message_up_text(self, data, ws, path):
+    """
+        A function that handles text message to ccs.
+        This can be the default behavior.
+        Note that all recipients are stored, which is for FETCH_RECIPIENT_LIST.
+        MESSAGE_UP_TEXT is for text messages, and other types are not implemented yet.
+        This triggers a "copy ccs message" notice.
+        See the function above.
+    """
+    channel_id = data['extra']['channel_id']
+    from_user_id = data['extra']['from_user_id']
+    to_user_ids = data['extra']['to_user_ids']
+    temp_msg_id = data['extra']['msg_id']
+    self.temp_msg_map[(channel_id, temp_msg_id)] = to_user_ids
+    await self._send_message_down(ws, data['extra']['type_code']+20000, channel_id, from_user_id, to_user_ids,
+                            data['extra']['origin'], msg_body=data['extra']['msg_body'], temp_msg_id=temp_msg_id)
+
+async def handle_message_up_image(self, data, ws, path):
+    """
+        A function that handles text message to ccs.
+        This can be the default behavior.
+        Note that all recipients are stored, which is for FETCH_RECIPIENT_LIST.
+        MESSAGE_UP_TEXT is for text messages, and other types are not implemented yet.
+        This triggers a "copy ccs message" notice.
+        See the function above.
+    """
+    channel_id = data['extra']['channel_id']
+    from_user_id = data['extra']['from_user_id']
+    to_user_ids = data['extra']['to_user_ids']
+    temp_msg_id = data['extra']['msg_id']
+    self.temp_msg_map[(channel_id, temp_msg_id)] = to_user_ids
+    await self._send_message_down(ws, data['extra']['type_code']+20000, channel_id, from_user_id, to_user_ids,
+                            data['extra']['origin'], msg_body=data['extra']['msg_body'], temp_msg_id=temp_msg_id)
+
+async def handle_message_up_file(self, data, ws, path):
+    """
+        A function that handles text message to ccs.
+        This can be the default behavior.
+        Note that all recipients are stored, which is for FETCH_RECIPIENT_LIST.
+        MESSAGE_UP_TEXT is for text messages, and other types are not implemented yet.
+        This triggers a "copy ccs message" notice.
+        See the function above.
+    """
+    channel_id = data['extra']['channel_id']
+    from_user_id = data['extra']['from_user_id']
+    to_user_ids = data['extra']['to_user_ids']
+    temp_msg_id = data['extra']['msg_id']
+    self.temp_msg_map[(channel_id, temp_msg_id)] = to_user_ids
+    await self._send_message_down(ws, data['extra']['type_code']+20000, channel_id, from_user_id, to_user_ids,
+                            data['extra']['origin'], msg_body=data['extra']['msg_body'], temp_msg_id=temp_msg_id)
+
+async def handle_notice_copy_ccs(self, data, ws, path):
+    """
+        A function that handles the "copy ccs message" notice.
+        After a message is sent downwards, this notice will be sent to ccs.
+        This is used to tell ccs which msg_id the message really holds on the aspect of social backend.
+    """
+    channel_id = data['extra']['channel_id']
+    temp_msg_id = data['extra']['ccs_temp_msg_id']
+    true_msg_id = data['extra']['msg_id']
+    self.agent.add_whistle_msg(channel_id, true_msg_id, self.temp_msg_map[(channel_id, temp_msg_id)])
+    self.temp_msg_map.pop((channel_id, temp_msg_id))

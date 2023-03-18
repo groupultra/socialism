@@ -1,19 +1,19 @@
 from .base_god_service import BaseGodService
-from .wrapped_goddess_db_agent import WrappedGoddessDBAgent
+from .database_agent import DatabaseAgent
 import rel
 
 
-class WrappedGodService(BaseGodService):
+class GodService(BaseGodService):
     """
         This is the wrapped God service.
         CCS provides a various of features for users in corresponding channels to use.
     """
 
-    def __init__(self, name='WrappedGodService'):
+    def __init__(self, name='GodService'):
         super().__init__()
-        self.agent = WrappedGoddessDBAgent(name+".json")
+        self.agent = DatabaseAgent(name+".json")
         self.uri = None
-        self.name = 'WrappedGodService'
+        self.name = 'GodService'
         self.feature_commands = []
 
         self.basic_command_func_map = {}

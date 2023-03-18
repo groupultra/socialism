@@ -3,7 +3,7 @@ import json
 import os
 
 
-class WrappedGoddessDBAgent:
+class DatabaseAgent:
     def __init__(self, path):
         self.path = path
 
@@ -15,6 +15,8 @@ class WrappedGoddessDBAgent:
     def leave_channel(self, channel_id, user_id):
         with open(self.path, 'r') as f:
             data = json.load(f)
+        if not channel_id in data["user_list"]:
+            return
         data["user_list"][channel_id].remove(user_id)
         # write
         with open(self.path, 'w') as f:
@@ -23,9 +25,10 @@ class WrappedGoddessDBAgent:
     def join_channel(self, channel_id, user_id):
         with open(self.path, 'r') as f:
             data = json.load(f)
-        if not channel_id in data:
+        if not channel_id in data["user_list"]:
             data["user_list"][channel_id] = []
-        data["user_list"][channel_id].append(user_id)
+        if not user_id in data["user_list"][channel_id]:
+            data["user_list"][channel_id].append(user_id)
         # write
         with open(self.path, 'w') as f:
             json.dump(data, f)
@@ -40,27 +43,31 @@ class WrappedGoddessDBAgent:
     def init_user_id_list(self, channel_id, user_ids):
         with open(self.path, 'r') as f:
             data = json.load(f)
+        data["user_list"] = {}
         data["user_list"][channel_id] = user_ids or []
         with open(self.path, 'w') as f:
             json.dump(data, f)
 
-    def init_dog_whistle(self, channel_id):
+    def init_whistle(self, channel_id):
         with open(self.path, 'r') as f:
             data = json.load(f)
-        data["dog_whistle"][channel_id] = []
+        data["whistle"] = {}
+        data["whistle"][channel_id] = {}
         with open(self.path, 'w') as f:
             json.dump(data, f)
 
     def add_whistle_msg(self, channel_id, msg, recipients):
         with open(self.path, 'r') as f:
             data = json.load(f)
-        data["dog_whistle"][channel_id].append({msg, recipients})
+        if not channel_id in data["whistle"]:
+            data["whistle"][channel_id] = {}
+        data["whistle"][channel_id][msg] = recipients
         with open(self.path, 'w') as f:
             json.dump(data, f)
 
     def get_whistle_recipients(self, channel_id, msg):
         with open(self.path, 'r') as f:
             data = json.load(f)
-        if not ("dog_whistle" in data and channel_id in data["dog_whistle"] and msg in data["dog_whistle"][channel_id]):
+        if not ("whistle" in data and channel_id in data["whistle"] and msg in data["whistle"][channel_id]):
             return []
-        return data["dog_whistle"][channel_id][msg]
+        return data["whistle"][channel_id][msg]

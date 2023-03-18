@@ -19,4 +19,5 @@ from socialization import ccs
 ```
 
 ## License
-shit
+
+MIT license.
